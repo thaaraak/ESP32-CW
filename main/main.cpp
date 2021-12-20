@@ -91,7 +91,7 @@ void app_main()
 	int currentFrequency = 7000000;
 	uint64_t freq = currentFrequency * 100ULL;
 	synth.set_freq(freq, SI5351_CLK0);
-    synth.output_enable( SI5351_CLK0, 1 );
+    synth.output_enable( SI5351_CLK0, 0 );
 
     esp_log_level_set("BUTTON", ESP_LOG_WARN);      // enable WARN logs from WiFi stack
 
@@ -111,13 +111,5 @@ void app_main()
 	        }
 	    }
 
-        //vTaskDelay(1000 / portTICK_PERIOD_MS);
-    	//synth.output_enable( SI5351_CLK0, 0 );
-/*
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        gpio_set_level(GPIO_NUM_32, 1);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    	//synth.output_enable( SI5351_CLK0, 1 );
-*/
     }
 }
