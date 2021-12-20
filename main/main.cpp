@@ -34,38 +34,6 @@ static esp_err_t i2c_master_init(void)
     return i2c_driver_install(i2c_master_port, conf.mode, 0, 0, 0);
 }
 
-int lastMult = -1;
-
-void changeFrequency( int currentFrequency )
-{
-	  int mult = 0;
-
-	  if ( currentFrequency < 8000000 )
-		  mult = 100;
-	  else if ( currentFrequency < 11000000 )
-		  mult = 80;
-	  else if ( currentFrequency < 15000000 )
-		  mult = 50;
-	  else if ( currentFrequency < 22000000 )
-		  mult = 40;
-	  else if ( currentFrequency < 30000000 )
-		  mult = 30;
-
-	  uint64_t freq = currentFrequency * 100ULL;
-	  uint64_t pllFreq = freq * mult;
-
-	  synth.set_freq_manual(freq, pllFreq, SI5351_CLK0);
-	  synth.set_freq_manual(freq, pllFreq, SI5351_CLK2);
-
-	  if ( mult != lastMult )
-	  {
-		  synth.set_phase(SI5351_CLK0, 0);
-		  synth.set_phase(SI5351_CLK2, mult);
-		  synth.pll_reset(SI5351_PLLA);
-		  lastMult = mult;
-	  }
-}
-
 void app_main()
 {
 
@@ -80,9 +48,9 @@ void app_main()
 
 	button_event_t ev;
 
-	unsigned long long BUTTON_13 = 13;
+	unsigned long long TRANSMIT = 13;
 
-	QueueHandle_t button_events = pulled_button_init( PIN_BIT(BUTTON_13), GPIO_PULLUP_ONLY );
+	QueueHandle_t button_events = pulled_button_init( PIN_BIT(TRANSMIT), GPIO_PULLUP_ONLY );
 
     gpio_pad_select_gpio(GPIO_NUM_32);
     gpio_set_direction(GPIO_NUM_32, GPIO_MODE_OUTPUT);
@@ -98,12 +66,12 @@ void app_main()
     while(1)
     {
 	    if (xQueueReceive(button_events, &ev, 1000/portTICK_PERIOD_MS)) {
-	        if ((ev.pin == BUTTON_13) && (ev.event == BUTTON_DOWN)) {
+	        if ((ev.pin == TRANSMIT) && (ev.event == BUTTON_DOWN)) {
 	            printf( "Button Down\n");
 	    	    gpio_set_level(GPIO_NUM_32, 1);
 	    	    synth.output_enable( SI5351_CLK0, 1 );
 	        }
-	        if ((ev.pin == BUTTON_13) && (ev.event == BUTTON_UP)) {
+	        if ((ev.pin == TRANSMIT) && (ev.event == BUTTON_UP)) {
 	            printf( "Button Up\n");
 	    	    gpio_set_level(GPIO_NUM_32, 0);
 	        	synth.output_enable( SI5351_CLK0, 0 );
