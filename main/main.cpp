@@ -15,6 +15,7 @@
 extern "C" void app_main();
 
 #include "button.h"
+#include "sidetone.h"
 
 Si5351 synth;
 
@@ -63,6 +64,7 @@ void app_main()
 
     esp_log_level_set("BUTTON", ESP_LOG_WARN);      // enable WARN logs from WiFi stack
 
+
     while(1)
     {
 	    if (xQueueReceive(button_events, &ev, 1000/portTICK_PERIOD_MS)) {
@@ -70,11 +72,13 @@ void app_main()
 	            printf( "Button Down\n");
 	    	    gpio_set_level(GPIO_NUM_32, 1);
 	    	    synth.output_enable( SI5351_CLK0, 1 );
+	    	    play_tone( 700, 20000, 90 );
 	        }
 	        if ((ev.pin == TRANSMIT) && (ev.event == BUTTON_UP)) {
 	            printf( "Button Up\n");
 	    	    gpio_set_level(GPIO_NUM_32, 0);
 	        	synth.output_enable( SI5351_CLK0, 0 );
+	        	stop_tone();
 
 	        }
 	    }

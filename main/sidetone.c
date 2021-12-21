@@ -17,33 +17,23 @@
 #include "driver/timer.h"
 #include "esp_log.h"
 
+#include "sidetone.h"
+
 /*  The timer ISR has an execution time of 5.5 micro-seconds(us).
     Therefore, a timer period less than 5.5 us will cause trigger the interrupt watchdog.
     7 us is a safe interval that will not trigger the watchdog. No need to customize it.
 */
 
 #define WITH_RELOAD            1
-#define TIMER_INTR_US          7                                    // Execution time of each ISR interval in micro-seconds
 #define TIMER_DIVIDER          16
-#define POINT_ARR_LEN          200                                  // Length of points array
-#define AMP_DAC                255                                  // Amplitude of DAC voltage. If it's more than 256 will causes dac_output_voltage() output 0.
-#define VDD                    3300                                 // VDD is 3.3V, 3300mV
-#define CONST_PERIOD_2_PI      6.2832
-#define SEC_TO_MICRO_SEC(x)    ((x) / 1000 / 1000)                  // Convert second to micro-second
-#define UNUSED_PARAM           __attribute__((unused))              // A const period parameter which equals 2 * pai, used to calculate raw dac output value.
-#define TIMER_TICKS            (TIMER_BASE_CLK / TIMER_DIVIDER)     // TIMER_BASE_CLK = APB_CLK = 80MHz
-#define ALARM_VAL_US           SEC_TO_MICRO_SEC(TIMER_INTR_US * TIMER_TICKS)     // Alarm value in micro-seconds
-#define OUTPUT_POINT_NUM       (int)(1000000 / (TIMER_INTR_US * FREQ) + 0.5)     // The number of output wave points.
+#define POINT_ARR_LEN          1000                             // Length of points array
+#define TIMER_TICKS            (APB_CLK_FREQ / TIMER_DIVIDER)   // TIMER_BASE_CLK = APB_CLK = 80MHz
+#define DAC_CHAN               DAC_CHANNEL_1    				// DAC_CHANNEL_1 (GPIO25) by default
 
-#define DAC_CHAN               CONFIG_EXAMPLE_DAC_CHANNEL           // DAC_CHANNEL_1 (GPIO25) by default
-#define FREQ                   CONFIG_EXAMPLE_WAVE_FREQUENCY        // 3kHz by default
+static int raw_val[POINT_ARR_LEN];
+static const char *TAG = "sidetone";
 
-_Static_assert(OUTPUT_POINT_NUM <= POINT_ARR_LEN, "The CONFIG_EXAMPLE_WAVE_FREQUENCY is too low and using too long buffer.");
-
-static int raw_val[POINT_ARR_LEN];                      // Used to store raw values
-static int volt_val[POINT_ARR_LEN];                    // Used to store voltage values(in mV)
-static const char *TAG = "wave_gen";
-
+static int output_points = 0;
 static int g_index = 0;
 
 /* Timer interrupt service routine */
@@ -55,13 +45,14 @@ static void IRAM_ATTR timer0_ISR(void *ptr)
     int *head = (int*)ptr;
 
     /* DAC output ISR has an execution time of 4.4 us*/
-    if (g_index >= OUTPUT_POINT_NUM) g_index = 0;
+    if (g_index >= output_points) g_index = 0;
     dac_output_voltage(DAC_CHAN, *(head + g_index));
     g_index++;
 }
 
+
 /* Timer group0 TIMER_0 initialization */
-static void example_timer_init(int timer_idx, bool auto_reload)
+static void tone_timer_init(int timer_idx, int timer_interrupt_usecs, bool auto_reload)
 {
     esp_err_t ret;
     timer_config_t config = {
@@ -75,75 +66,48 @@ static void example_timer_init(int timer_idx, bool auto_reload)
 
     ret = timer_init(TIMER_GROUP_0, timer_idx, &config);
     ESP_ERROR_CHECK(ret);
+
     ret = timer_set_counter_value(TIMER_GROUP_0, timer_idx, 0x00000000ULL);
     ESP_ERROR_CHECK(ret);
-    ret = timer_set_alarm_value(TIMER_GROUP_0, timer_idx, ALARM_VAL_US);
+
+    int alarm_usecs = ( timer_interrupt_usecs * TIMER_TICKS) / 1000000;
+    ret = timer_set_alarm_value(TIMER_GROUP_0, timer_idx, alarm_usecs);
     ESP_ERROR_CHECK(ret);
+
     ret = timer_enable_intr(TIMER_GROUP_0, TIMER_0);
     ESP_ERROR_CHECK(ret);
     /* Register an ISR handler */
-    timer_isr_register(TIMER_GROUP_0, timer_idx, timer0_ISR, (void *)raw_val, ESP_INTR_FLAG_IRAM, NULL);
+    timer_isr_register(TIMER_GROUP_0, timer_idx, timer0_ISR, (void *)raw_val, ESP_INTR_FLAG_IRAM, NULL); // @suppress("Symbol is not resolved")
 }
 
- static void prepare_data(int pnt_num)
+ static void prepare_data(int pnt_num, int amplitude)
 {
+    for (int i = 0; i < pnt_num; i ++)
+        raw_val[i] = (int)((sin( i * 2 * M_PI / pnt_num) + 1) * (double)(amplitude)/2 + 0.5);
+}
+
+void play_tone( int frequency, int sample_frequency, int amplitude )
+{
+    esp_err_t ret;
+
     timer_pause(TIMER_GROUP_0, TIMER_0);
-    for (int i = 0; i < pnt_num; i ++) {
-        #ifdef CONFIG_EXAMPLE_WAVEFORM_SINE
-            raw_val[i] = (int)((sin( i * CONST_PERIOD_2_PI / pnt_num) + 1) * (double)(AMP_DAC)/2 + 0.5);
-        #elif CONFIG_EXAMPLE_WAVEFORM_TRIANGLE
-            raw_val[i] = (i > (pnt_num/2)) ? (2 * AMP_DAC * (pnt_num - i) / pnt_num) : (2 * AMP_DAC * i / pnt_num);
-        #elif CONFIG_EXAMPLE_WAVEFORM_SAWTOOTH
-            raw_val[i] = (i == pnt_num) ? 0 : (i * AMP_DAC / pnt_num);
-        #elif CONFIG_EXAMPLE_WAVEFORM_SQUARE
-            raw_val[i] = (i < (pnt_num/2)) ? AMP_DAC : 0;
-        #endif
-        volt_val[i] = (int)(VDD * raw_val[i] / (float)AMP_DAC);
-    }
+
+    int timer_interrupt_usecs = 1000000 / sample_frequency;
+    output_points = (int)(1000000 / ( timer_interrupt_usecs * frequency ) + 0.5);
+
+    tone_timer_init(TIMER_0, timer_interrupt_usecs, WITH_RELOAD);
+    ret = dac_output_enable(DAC_CHAN);
+    ESP_ERROR_CHECK(ret);
+    g_index = 0;
+
+    prepare_data( output_points, amplitude );
+
     timer_start(TIMER_GROUP_0, TIMER_0);
 }
 
-static void log_info(void)
+void stop_tone()
 {
-    ESP_LOGI(TAG, "DAC output channel: %d", DAC_CHAN);
-    if (DAC_CHAN == DAC_CHANNEL_1) {
-        ESP_LOGI(TAG, "GPIO:%d", GPIO_NUM_25);
-    } else {
-        ESP_LOGI(TAG, "GPIO:%d", GPIO_NUM_26);
-    }
-    #ifdef CONFIG_EXAMPLE_WAVEFORM_SINE
-        ESP_LOGI(TAG, "Waveform: SINE");
-    #elif CONFIG_EXAMPLE_WAVEFORM_TRIANGLE
-        ESP_LOGI(TAG, "Waveform: TRIANGLE");
-    #elif CONFIG_EXAMPLE_WAVEFORM_SAWTOOTH
-        ESP_LOGI(TAG, "Waveform: SAWTOOTH");
-    #elif CONFIG_EXAMPLE_WAVEFORM_SQUARE
-        ESP_LOGI(TAG, "Waveform: SQUARE");
-    #endif
+    timer_pause(TIMER_GROUP_0, TIMER_0);
+    dac_output_disable(DAC_CHAN);
 
-    ESP_LOGI(TAG, "Frequency(Hz): %d", FREQ);
-    ESP_LOGI(TAG, "Output points num: %d\n", OUTPUT_POINT_NUM);
-}
-
-void app_main(void)
-{
-    esp_err_t ret;
-    example_timer_init(TIMER_0, WITH_RELOAD);
-
-    ret = dac_output_enable(DAC_CHAN);
-    ESP_ERROR_CHECK(ret);
-
-    log_info();
-    g_index = 0;
-    prepare_data(OUTPUT_POINT_NUM);
-
-    while(1) {
-        vTaskDelay(10);
-        #if CONFIG_EXAMPLE_LOG_VOLTAGE
-            if (g_index < OUTPUT_POINT_NUM) {
-                ESP_LOGI(TAG, "Output voltage(mV): %d", volt_val[g_index]);
-                ESP_LOGD(TAG, "g_index: %d\n", g_index);
-            }
-        #endif
-    }
 }

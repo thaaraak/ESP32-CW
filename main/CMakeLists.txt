@@ -2,7 +2,7 @@
 set(COMPONENT_REQUIRES )
 set(COMPONENT_PRIV_REQUIRES )
 
-set(COMPONENT_SRCS "main.cpp" "si5351.cpp" "button.c" )
+set(COMPONENT_SRCS "main.cpp" "si5351.cpp" "button.c" "sidetone.c" )
 set(COMPONENT_ADD_INCLUDEDIRS "")
 
 register_component()
